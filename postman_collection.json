@@ -1,0 +1,67 @@
+{
+  "info": {
+    "name": "Google Maps Lead Scraper API (Sync)",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+    "description": "Sync API - POST /scrape/sync with keyword, location, limit. Returns leads directly as JSON."
+  },
+  "variable": [
+    { "key": "base_url", "value": "http://localhost:8000" }
+  ],
+  "item": [
+    {
+      "name": "1. Health Check",
+      "request": {
+        "method": "GET",
+        "url": "{{base_url}}/health"
+      }
+    },
+    {
+      "name": "2. Scrape - Restaurant in Indore",
+      "request": {
+        "method": "POST",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "url": "{{base_url}}/scrape/sync",
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"keyword\": \"restaurant\",\n  \"location\": \"Indore\",\n  \"limit\": 5,\n  \"find_emails\": false\n}"
+        }
+      }
+    },
+    {
+      "name": "3. Scrape - B Tech Colleges in Indore (with emails)",
+      "request": {
+        "method": "POST",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "url": "{{base_url}}/scrape/sync",
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"keyword\": \"b tech college\",\n  \"location\": \"Indore\",\n  \"limit\": 10,\n  \"find_emails\": true\n}"
+        }
+      }
+    },
+    {
+      "name": "4. Scrape - Electronic Shops in Delhi",
+      "request": {
+        "method": "POST",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "url": "{{base_url}}/scrape/sync",
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"keyword\": \"electronic shop\",\n  \"location\": \"Delhi\",\n  \"limit\": 20,\n  \"find_emails\": true\n}"
+        }
+      }
+    },
+    {
+      "name": "5. Scrape - Gym in Mumbai (large)",
+      "request": {
+        "method": "POST",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "url": "{{base_url}}/scrape/sync",
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"keyword\": \"gym\",\n  \"location\": \"Mumbai\",\n  \"limit\": 100,\n  \"find_emails\": false\n}"
+        }
+      }
+    }
+  ]
+}
