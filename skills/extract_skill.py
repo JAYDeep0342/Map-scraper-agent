@@ -60,26 +60,61 @@ class ExtractSkill:
 
         page = await self.context.new_page()
         try:
-            urls = [website]
-            base = website.rstrip("/")
-            urls += [f"{base}/{path}" for path in settings.CONTACT_PATHS]
-
-            for i, url in enumerate(urls):
-                try:
-                    resp = await page.goto(
-                        url, wait_until="domcontentloaded",
-                        timeout=settings.ENRICH_TIMEOUT_MS,
-                    )
-                    if resp is None or resp.status >= 400:
-                        continue
+            # Step 1: Visit the homepage
+            try:
+                resp = await page.goto(
+                    website, wait_until="domcontentloaded",
+                    timeout=settings.ENRICH_TIMEOUT_MS,
+                )
+                if resp is not None and resp.status < 400:
                     html = await page.content()
                     self._harvest(html, emails, socials)
+            except Exception:
+                pass
+
+            # Step 2: If we didn't find any email, search for actual contact/about links on the homepage
+            if not emails:
+                try:
+                    anchors = await page.eval_on_selector_all(
+                        "a[href]",
+                        "els => els.map(e => ({href: e.href, text: e.innerText.toLowerCase()}))"
+                    )
+                    
+                    # Look for contact/about links on the same domain
+                    target_urls = []
+                    seen_urls = set()
+                    for anchor in anchors:
+                        href = anchor["href"]
+                        text = anchor["text"]
+                        
+                        href_parsed = urllib.parse.urlparse(href)
+                        href_host = href_parsed.netloc.lower().removeprefix("www.")
+                        
+                        if href_host == host or not href_host:
+                            full_url = urllib.parse.urljoin(website, href)
+                            normalized_url = full_url.split("?")[0].rstrip("/")
+                            
+                            if normalized_url not in seen_urls:
+                                if any(kw in normalized_url.lower() or kw in text for kw in ("contact", "about", "info", "support", "address")):
+                                    seen_urls.add(normalized_url)
+                                    target_urls.append(full_url)
+                    
+                    # Visit up to 2 discovered URLs to harvest emails
+                    for contact_url in target_urls[:2]:
+                        try:
+                            resp = await page.goto(
+                                contact_url, wait_until="domcontentloaded",
+                                timeout=settings.ENRICH_TIMEOUT_MS,
+                            )
+                            if resp is not None and resp.status < 400:
+                                html = await page.content()
+                                self._harvest(html, emails, socials)
+                                if emails:
+                                    break
+                        except Exception:
+                            continue
                 except Exception:
-                    continue
-                # Homepage is always scanned; contact pages only until
-                # we have found at least one email.
-                if i >= 0 and emails:
-                    break
+                    pass
         finally:
             await page.close()
 

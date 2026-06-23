@@ -50,13 +50,14 @@ class MapsAgent:
                 lead = await self._extract_place(page, query)
                 return [lead] if lead else []
 
-            links = await self._collect_listing_links(page, max_results)
+            buffer_results = int(max_results * 1.5) + 15
+            links = await self._collect_listing_links(page, buffer_results, progress)
             await page.close()
 
             if progress:
                 progress(f"  Found {len(links)} listings, scraping details...")
 
-            return await self._scrape_details(context, links, query, progress)
+            return await self._scrape_details(context, links, query, max_results, progress)
         finally:
             await context.close()
 
@@ -77,17 +78,19 @@ class MapsAgent:
         except Exception:
             pass
 
-    async def _collect_listing_links(self, page: Page, max_results: int) -> list[str]:
+    async def _collect_listing_links(self, page: Page, max_results: int, progress=None) -> list[str]:
         """Scroll the results feed and collect unique /maps/place/ links."""
         try:
             await page.wait_for_selector('div[role="feed"]', timeout=20_000)
         except PWTimeout:
+            if progress:
+                progress("  Error: Results feed element not found on the page.")
             return []
 
         links: dict[str, None] = {}  # ordered set
         stale_rounds = 0
 
-        for _ in range(settings.MAX_FEED_SCROLLS):
+        for scroll_round in range(settings.MAX_FEED_SCROLLS):
             hrefs = await page.eval_on_selector_all(
                 'div[role="feed"] a[href*="/maps/place/"]',
                 "els => els.map(e => e.href)",
@@ -95,20 +98,34 @@ class MapsAgent:
             before = len(links)
             for href in hrefs:
                 links.setdefault(href.split("?")[0])
+            
+            if progress:
+                progress(f"  Collected {len(links)} links so far...")
+
             if len(links) >= max_results:
+                if progress:
+                    progress(f"  Reached target limit: {len(links)} >= {max_results}")
                 break
 
             feed_text = await page.locator('div[role="feed"]').inner_text()
             if any(m in feed_text.lower() for m in END_OF_LIST_MARKERS):
+                if progress:
+                    progress("  Reached end of search results list on Google Maps.")
                 break
 
             stale_rounds = stale_rounds + 1 if len(links) == before else 0
-            if stale_rounds >= 5:
+            if stale_rounds >= 3:
+                if progress:
+                    progress(f"  Scrolling halted: no new results loaded after 3 attempts. Total links: {len(links)}")
                 break
 
-            await page.eval_on_selector(
-                'div[role="feed"]', "el => el.scrollBy(0, el.clientHeight * 2)"
-            )
+            # Scroll last element into view to force next page of listings to load
+            try:
+                await page.locator('div[role="feed"] a[href*="/maps/place/"]').last.scroll_into_view_if_needed(timeout=2000)
+            except Exception:
+                await page.eval_on_selector(
+                    'div[role="feed"]', "el => el.scrollBy(0, el.clientHeight * 2)"
+                )
             await page.wait_for_timeout(settings.FEED_SCROLL_PAUSE_MS)
 
         return list(links)[:max_results]
@@ -117,37 +134,44 @@ class MapsAgent:
     # Detail pages
     # ------------------------------------------------------------------ #
     async def _scrape_details(
-        self, context: BrowserContext, links: list[str], query: str, progress=None
+        self, context: BrowserContext, links: list[str], query: str, max_results: int, progress=None
     ) -> list[dict]:
         semaphore = asyncio.Semaphore(settings.DETAIL_CONCURRENCY)
-        done = 0
+        unique_leads = []
+        seen = set()
+        lock = asyncio.Lock()
+        stop_event = asyncio.Event()
 
-        async def worker(link: str) -> dict | None:
-            nonlocal done
+        async def worker(link: str) -> None:
+            if stop_event.is_set():
+                return
             async with semaphore:
+                if stop_event.is_set():
+                    return
                 detail_page = await context.new_page()
                 try:
-                    await detail_page.goto(link, wait_until="domcontentloaded")
+                    await detail_page.goto(link, wait_until="domcontentloaded", timeout=15000)
                     lead = await self._extract_place(detail_page, query)
+                    if lead:
+                        async with lock:
+                            if stop_event.is_set():
+                                return
+                            key = (lead["name"], lead["address"])
+                            if key not in seen:
+                                seen.add(key)
+                                unique_leads.append(lead)
+                                if progress:
+                                    progress(f"  [{len(unique_leads)}/{max_results}] {lead['name']}")
+                                if len(unique_leads) >= max_results:
+                                    stop_event.set()
+                except Exception:
+                    pass
                 finally:
                     await detail_page.close()
-                done += 1
-                if progress and lead:
-                    progress(f"  [{done}/{len(links)}] {lead['name']}")
-                return lead
 
-        results = await asyncio.gather(*(worker(l) for l in links), return_exceptions=True)
-        leads = [r for r in results if isinstance(r, dict)]
-
-        # Dedupe by name + address (same place can appear twice in the feed).
-        seen: set[tuple] = set()
-        unique = []
-        for lead in leads:
-            key = (lead["name"], lead["address"])
-            if key not in seen:
-                seen.add(key)
-                unique.append(lead)
-        return unique
+        tasks = [asyncio.create_task(worker(l)) for l in links]
+        await asyncio.gather(*tasks, return_exceptions=True)
+        return unique_leads[:max_results]
 
     async def _extract_place(self, page: Page, query: str) -> dict | None:
         """Extract one business' details from an open place page."""
@@ -155,7 +179,7 @@ class MapsAgent:
             await page.wait_for_selector("h1", timeout=15_000)
         except PWTimeout:
             return None
-        await page.wait_for_timeout(500)
+        await page.wait_for_timeout(200)
 
         async def text(selector: str) -> str:
             el = await page.query_selector(selector)

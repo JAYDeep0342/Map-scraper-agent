@@ -23,19 +23,19 @@ NAV_TIMEOUT_MS = 45_000
 MAPS_SEARCH_URL = "https://www.google.com/maps/search/{query}?hl=en"
 
 # How many listing detail pages to scrape in parallel (tabs per browser)
-DETAIL_CONCURRENCY = 4
+DETAIL_CONCURRENCY = 10
 
 # Max scroll attempts on the results feed before giving up
 MAX_FEED_SCROLLS = 60
 
 # Pause between feed scrolls (ms)
-FEED_SCROLL_PAUSE_MS = 1_200
+FEED_SCROLL_PAUSE_MS = 650
 
 # ---------------------------------------------------------------------------
 # Lead enrichment (visit business website to find emails / socials)
 # ---------------------------------------------------------------------------
-ENRICH_TIMEOUT_MS = 20_000
-ENRICH_CONCURRENCY = 4
+ENRICH_TIMEOUT_MS = 10_000
+ENRICH_CONCURRENCY = 10
 # Candidate contact-page paths tried after the homepage
 CONTACT_PATHS = ["contact", "contact-us", "contactus", "about", "about-us"]
 

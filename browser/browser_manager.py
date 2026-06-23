@@ -28,6 +28,11 @@ class BrowserManager:
                         "--no-first-run",
                         "--disable-infobars",
                         "--lang=en-US",
+                        "--disable-features=IsolateOrigins,site-per-process",
+                        "--disable-web-security",
+                        "--no-sandbox",
+                        "--disable-dev-shm-usage",
+                        "--window-size=1366,850",
                     ],
                 )
         return self._browser
@@ -39,13 +44,27 @@ class BrowserManager:
             user_agent=settings.USER_AGENT,
             viewport=settings.VIEWPORT,
             locale=settings.LOCALE,
+            extra_http_headers={
+                "Accept-Language": "en-IN,en;q=0.9,hi;q=0.8",
+                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+                "sec-ch-ua": '"Chromium";v="124", "Google Chrome";v="124", "Not-A.Brand";v="99"',
+                "sec-ch-ua-mobile": "?0",
+                "sec-ch-ua-platform": '"Windows"',
+                "Upgrade-Insecure-Requests": "1",
+            },
         )
         context.set_default_navigation_timeout(settings.NAV_TIMEOUT_MS)
         context.set_default_timeout(settings.NAV_TIMEOUT_MS)
-        # Hide the webdriver flag that headless Chromium exposes.
-        await context.add_init_script(
-            "Object.defineProperty(navigator, 'webdriver', {get: () => undefined});"
-        )
+        # Comprehensive anti-detection init script
+        await context.add_init_script("""
+            Object.defineProperty(navigator, 'webdriver', {get: () => undefined});
+            Object.defineProperty(navigator, 'plugins', {get: () => [1,2,3,4,5]});
+            Object.defineProperty(navigator, 'languages', {get: () => ['en-IN', 'en', 'hi']});
+            window.chrome = { runtime: {} };
+            Object.defineProperty(navigator, 'permissions', {
+                get: () => ({ query: () => Promise.resolve({ state: 'granted' }) })
+            });
+        """)
         return context
 
     async def close(self) -> None:
