@@ -19,7 +19,6 @@ class UniversalAgent:
         context = await self.browser_manager.new_context()
         try:
             page = await context.new_page()
-            await page.route("**/*", lambda route: route.abort() if route.request.resource_type in ["image", "stylesheet", "font", "media", "imageset"] else route.continue_())
             try:
                 await page.goto(url, wait_until="domcontentloaded", timeout=30000)
             except Exception as e:
@@ -106,42 +105,59 @@ class UniversalAgent:
                                 links = Array.from(document.querySelectorAll('ul.products li a.woocommerce-loop-product__link')).map(a => a.href);
                             }}
                             
-                            // Advanced Heuristic Fallback
-                            if (links.length === 0) {{
-                                const allLinks = Array.from(document.querySelectorAll('a'));
-                                links = allLinks.filter(a => {{
-                                    const href = a.href.toLowerCase();
-                                    if (!href || href.includes('#') || href.includes('javascript:') || href.includes('mailto:') || href.includes('tel:')) return false;
-                                    
-                                    const host = window.location.hostname;
-                                    
-                                    // Domain specific logic
-                                    if (host.includes('industrybuying.com')) {{
-                                        return href.includes('industrybuying.com/') && href.split('-').length > 2 && !href.includes('/category/') && !href.includes('/brand/');
-                                    }}
-                                    if (host.includes('justdial.com')) {{
-                                        return href.includes('justdial.com/') && !href.includes('/login') && !href.includes('analytics');
-                                    }}
-                                    if (host.includes('se.com')) {{
-                                        return href.includes('/product/') || href.includes('-id-');
-                                    }}
-                                    if (host.includes('siemens.com')) {{
-                                        return href.includes('/products/') && href.match(/[a-z0-9]{4,}-[a-z0-9]{4,}/);
-                                    }}
-                                    if (host.includes('smartshop.lk-ea.com')) {{
-                                        return href.includes('.html') && !href.includes('shop-by-category') && !href.includes('customer');
-                                    }}
-                                    
-                                    // Reject utility links
-                                    const badKeywords = ['/cart', '/login', '/account', '/wishlist', '/compare', '/contact', '/about', '/checkout', '/search', 'grievance'];
-                                    if (badKeywords.some(kw => href.includes(kw))) return false;
-                                    
+                            // Always apply basic sanity checks to ALL links
+                            const allLinks = links.length > 0 ? links : Array.from(document.querySelectorAll('a'));
+                            
+                            links = allLinks.filter(a => {{
+                                const href = (typeof a === 'string' ? a : a.href).toLowerCase();
+                                if (!href || href.includes('#') || href.includes('javascript:') || href.includes('mailto:') || href.includes('tel:')) return false;
+                                
+                                const host = window.location.hostname;
+                                
+                                // Domain specific logic
+                                if (host.includes('industrybuying.com')) {{
+                                    return href.includes('industrybuying.com/') && href.split('-').length > 2 && !href.includes('/category/') && !href.includes('/brand/');
+                                }}
+                                if (host.includes('justdial.com')) {{
+                                    return href.includes('justdial.com/') && !href.includes('/login') && !href.includes('analytics');
+                                }}
+                                if (host.includes('se.com')) {{
+                                    return href.includes('/product/') || href.includes('-id-');
+                                }}
+                                if (host.includes('siemens.com')) {{
+                                    return href.includes('/products/') && href.match(/[a-z0-9]{4,}-[a-z0-9]{4,}/);
+                                }}
+                                if (host.includes('smartshop.lk-ea.com')) {{
+                                    return href.includes('.html') && !href.includes('shop-by-category') && !href.includes('customer');
+                                }}
+                                
+                                if (host.includes('havells.com')) {{
+                                    return href.includes('.html') && !href.includes('category');
+                                }}
+                                
+                                // Reject utility links
+                                const badKeywords = ['/cart', '/login', '/account', '/wishlist', '/compare', '/contact', '/about', '/checkout', '/search', 'grievance'];
+                                if (badKeywords.some(kw => href.includes(kw))) return false;
+                                
+                                // Must have a path (not just the homepage)
+                                try {{
+                                    const urlObj = new URL(href);
+                                    if (urlObj.pathname === '/' || urlObj.pathname.length < 5) return false;
+                                }} catch(e) {{}}
+                                
+                                // If links were pre-selected by Magento/Shopify logic, keep them if they passed above checks
+                                if (links.length > 0) return true;
+                                
+                                // Otherwise (Fallback), require product patterns
+                                if (href.includes('/product') || href.includes('/p/') || href.includes('/item/')) return true;
+                                
+                                if (a.querySelector) {{
                                     const hasImage = a.querySelector('img') !== null;
                                     const parentHasProductClass = a.closest('[class*="product-item"], [class*="product-card"], .product-item, .product-card, [class*="grid"] [class*="product"]') !== null;
-                                    
                                     return hasImage || parentHasProductClass;
-                                }}).map(a => a.href);
-                            }}
+                                }}
+                                return false;
+                            }}).map(a => typeof a === 'string' ? a : a.href);
 
                             // Deduplicate before returning
                             return [...new Set(links)];
@@ -174,8 +190,6 @@ class UniversalAgent:
             async def scrape_task(link):
                 async with sem:
                     new_page = await context.new_page()
-                    # BLOCK IMAGES AND CSS FOR 5x SPEED!
-                    await new_page.route("**/*", lambda route: route.abort() if route.request.resource_type in ["image", "stylesheet", "font", "media", "imageset"] else route.continue_())
                     try:
                         logger.info(f"[UNIVERSAL] Parallel task started: {link}")
                         return await self._extract_product(new_page, link)
