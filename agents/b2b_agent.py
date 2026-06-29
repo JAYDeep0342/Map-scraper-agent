@@ -4,6 +4,7 @@ import asyncio
 import logging
 from playwright.async_api import Page
 from browser.browser_manager import BrowserManager
+from utils.site_detector import SiteDetector
 
 logger = logging.getLogger("b2b-agent")
 
@@ -34,13 +35,23 @@ class B2BAgent:
             if is_product_page:
                 product_links.append(url)
             else:
+                platform = await SiteDetector.detect(page)
+                logger.info(f"[B2B] Detected platform: {platform} for URL: {url}")
+                
                 seen = set()
                 page_num = 1
                 base_url = url.split('?')[0]
                 
                 while len(product_links) < limit:
                     if page_num > 1:
-                        next_url = f"{base_url}?p={page_num}"
+                        if platform == 'shopify':
+                            next_url = f"{base_url}?page={page_num}"
+                        elif platform == 'woocommerce':
+                            curr_base = base_url if base_url.endswith('/') else base_url + '/'
+                            next_url = f"{curr_base}page/{page_num}/"
+                        else:
+                            next_url = f"{base_url}?p={page_num}"
+                            
                         logger.info(f"Navigating to page {page_num}: {next_url}")
                         try:
                             await page.goto(next_url, wait_until="domcontentloaded", timeout=30000)
@@ -49,18 +60,49 @@ class B2BAgent:
                             logger.warning(f"[B2B-PAGINATION] Error navigating to {next_url}: {e}")
                             break
 
-                    # Extract all links and filter heuristically
-                    hrefs = await page.evaluate("""
-                        () => {
-                            return Array.from(document.querySelectorAll('.desktoptd1 a, .product-item-info a, a.product-item-link'))
-                                .map(a => a.href)
-                                .filter(href => {
-                                    if (!href.endsWith('.html')) return false;
-                                    if (href.includes('?')) return false;
-                                    if (href.includes('#')) return false;
-                                    return true;
-                                });
-                        }
+                    # Universal Link Extraction Strategy
+                    hrefs = await page.evaluate(f"""
+                        () => {{
+                            const platform = '{platform}';
+                            let links = [];
+                            
+                            if (platform === 'magento') {{
+                                links = Array.from(document.querySelectorAll('.product-item-info a.product-item-photo, .product-item-info a.product-item-link, .desktoptd1 a')).map(a => a.href);
+                            }} else if (platform === 'shopify') {{
+                                links = Array.from(document.querySelectorAll('.product-card a, .grid__item a[href*="/products/"]')).map(a => a.href);
+                            }} else if (platform === 'woocommerce') {{
+                                links = Array.from(document.querySelectorAll('ul.products li a.woocommerce-loop-product__link')).map(a => a.href);
+                            }}
+                            
+                            // Advanced Heuristic Fallback
+                            if (links.length === 0) {{
+                                const allLinks = Array.from(document.querySelectorAll('a'));
+                                links = allLinks.filter(a => {{
+                                    const href = a.href.toLowerCase();
+                                    // 1. Basic generic filters
+                                    if (!href || href.includes('#') || href.includes('javascript:') || href.includes('mailto:') || href.includes('tel:')) return false;
+                                    
+                                    // 2. Reject utility links
+                                    const badKeywords = ['/cart', '/login', '/account', '/wishlist', '/compare', '/contact', '/about', '/checkout', '/search', 'grievance'];
+                                    if (badKeywords.some(kw => href.includes(kw))) return false;
+                                    
+                                    // 3. Must have a path (not just the homepage)
+                                    const url = new URL(a.href);
+                                    if (url.pathname === '/' || url.pathname.length < 5) return false;
+                                    
+                                    // 4. Accept if it looks like a product URL or contains an image
+                                    if (href.includes('/product') || href.includes('/p/') || href.includes('/item/')) return true;
+                                    
+                                    const hasImage = a.querySelector('img') !== null;
+                                    const parentHasProductClass = a.closest('[class*="product"], [class*="item"], [class*="grid"]') !== null;
+                                    
+                                    return hasImage || parentHasProductClass;
+                                }}).map(a => a.href);
+                            }}
+
+                            // Deduplicate before returning
+                            return [...new Set(links)];
+                        }}
                     """)
                     
                     if not hrefs:
@@ -130,18 +172,18 @@ class B2BAgent:
                 };
 
                 // 1. Basic Info
-                let h1 = document.querySelector('h1.page-title, h1');
+                let h1 = document.querySelector('h1.page-title, h1.product_title, h1.product-title, h1[itemprop="name"], h1');
                 if (h1) result.product_name = clean(h1.innerText);
                 if (!result.product_name) result.product_name = document.title;
 
-                let skuEl = document.querySelector('.product.attribute.sku .value, [itemprop="sku"]');
+                let skuEl = document.querySelector('.product.attribute.sku .value, [itemprop="sku"], .sku_wrapper .sku, .product-sku');
                 if (skuEl) result.sku = clean(skuEl.innerText);
 
                 // 2. Pricing
-                let finalPrice = document.querySelector('.price-wrapper .price, [data-price-type="finalPrice"] .price');
+                let finalPrice = document.querySelector('.price-wrapper .price, [data-price-type="finalPrice"] .price, .woocommerce-Price-amount, .price-item--sale, [itemprop="price"]');
                 if (finalPrice) result.price_with_tax = clean(finalPrice.innerText);
 
-                let basePrice = document.querySelector('.price-wrapper[data-price-type="basePrice"] .price, .old-price .price');
+                let basePrice = document.querySelector('.price-wrapper[data-price-type="basePrice"] .price, .old-price .price, .price-item--regular, del .woocommerce-Price-amount');
                 if (basePrice) result.base_price = clean(basePrice.innerText);
 
                 // Try to find GST in text
