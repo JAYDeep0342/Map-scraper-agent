@@ -64,10 +64,10 @@ app.add_middleware(
 # ---------------------------------------------------------------------------
 # Decoupled Routers (E-commerce & Social Media)
 # ---------------------------------------------------------------------------
-from api.routers import ecommerce, social, b2b
+from api.routers import ecommerce, social, universal
 app.include_router(ecommerce.router)
 app.include_router(social.router)
-app.include_router(b2b.router)
+app.include_router(universal.router)
 
 
 # ---------------------------------------------------------------------------
