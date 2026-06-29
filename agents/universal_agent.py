@@ -116,7 +116,7 @@ class UniversalAgent:
                                 
                                 // Domain specific logic
                                 if (host.includes('industrybuying.com')) {{
-                                    return href.includes('industrybuying.com/') && href.split('-').length > 2 && !href.includes('/category/') && !href.includes('/brand/');
+                                    return href.includes('industrybuying.com/') && href.split('-').length > 2 && !href.includes('/category/') && !href.includes('/brands/') && !href.includes('/brand/') && !href.includes('/offers/') && !href.match(/-[0-9]+$/);
                                 }}
                                 if (host.includes('justdial.com')) {{
                                     return href.includes('justdial.com/') && !href.includes('/login') && !href.includes('analytics');
@@ -318,13 +318,32 @@ class UniversalAgent:
 
                 // 2. Pricing
                 if (!result.price_with_tax) {
-                    let finalPrice = document.querySelector('.price-wrapper .price, [data-price-type="finalPrice"] .price, .woocommerce-Price-amount, .price-item--sale, [itemprop="price"]');
+                    let finalPrice = document.querySelector('.price-wrapper .price, [data-price-type="finalPrice"] .price, .woocommerce-Price-amount, .price-item--sale, [itemprop="price"], .product-price, .sellingPrice, .discountedPrice, .price-box .price, span.price, .rs');
                     if (finalPrice) result.price_with_tax = clean(finalPrice.innerText);
                 }
 
                 if (!result.base_price) {
-                    let basePrice = document.querySelector('.price-wrapper[data-price-type="basePrice"] .price, .old-price .price, .price-item--regular, del .woocommerce-Price-amount');
+                    let basePrice = document.querySelector('.price-wrapper[data-price-type="basePrice"] .price, .old-price .price, .price-item--regular, del .woocommerce-Price-amount, .listPrice, .mrp, .original-price');
                     if (basePrice) result.base_price = clean(basePrice.innerText);
+                }
+                
+                // Advanced Heuristic: Find price by Rupee symbol if classes failed
+                if (!result.price_with_tax) {
+                    let priceEl = Array.from(document.querySelectorAll('div, span, strong, p, h2, h3')).find(e => {
+                        if (e.children.length > 2) return false;
+                        let t = e.innerText;
+                        return t && (t.includes('₹') || t.includes('Rs') || t.includes('INR')) && /\d{2,}/.test(t);
+                    });
+                    if (priceEl) {
+                        let m = priceEl.innerText.match(/(?:₹|Rs\.?|INR)\s*([\d,]+(?:\.\d+)?)/i);
+                        if (m) result.price_with_tax = '₹' + m[1];
+                    }
+                }
+
+                // IndustryBuying Specific Fallback (Safe because it's scoped by hostname)
+                if (!result.price_with_tax && window.location.hostname.includes('industrybuying')) {
+                    let ibPrice = Array.from(document.querySelectorAll('strong.font-semibold')).find(e => /^\d{1,3}(?:,\d{3})*(?:\.\d+)?$/.test(e.innerText.trim()));
+                    if (ibPrice) result.price_with_tax = '₹' + ibPrice.innerText.trim();
                 }
 
                 // Try to find GST in text
@@ -338,6 +357,13 @@ class UniversalAgent:
                 if (!result.image) {
                     let img = document.querySelector('.gallery-placeholder img, [itemprop="image"]');
                     if (img) result.image = img.src;
+                }
+                
+                // IndustryBuying Specific Image Fallback (Safe because it's scoped by hostname)
+                if (!result.image && window.location.hostname.includes('industrybuying')) {
+                    let ibImg = Array.from(document.querySelectorAll('img')).find(img => img.src && img.src.includes('/products/') && !img.src.includes('/thumb/'));
+                    if (!ibImg) ibImg = document.querySelector('img[src*="/products/"]');
+                    if (ibImg) result.image = ibImg.src;
                 }
 
                 // PDFs
