@@ -137,7 +137,7 @@ ENRICH_CONCURRENCY	4	Parallel tabs for email enrichment
 ENRICH_TIMEOUT_MS	20000	Timeout per website visit (ms)
 Environment Variables
 
-SCRAPER_HEADLESS=0   # Show browser window (useful for debugging)
+SCRAPER_HEADLESS=0  
 Spring Boot Integration Example
 
 RestTemplate restTemplate = new RestTemplate();
