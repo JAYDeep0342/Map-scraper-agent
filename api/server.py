@@ -26,7 +26,6 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field, field_validator
 
 from agents.maps_agent import MapsAgent
-from agents.web_search_agent import WebSearchAgent
 from browser.browser_manager import BrowserManager
 from skills.extract_skill import ExtractSkill
 from config.india_cities import INDIA_CITIES, INDIA_STATES
@@ -64,9 +63,8 @@ app.add_middleware(
 # ---------------------------------------------------------------------------
 # Decoupled Routers (E-commerce & Social Media)
 # ---------------------------------------------------------------------------
-from api.routers import ecommerce, social, universal
+from api.routers import ecommerce, universal
 app.include_router(ecommerce.router)
-app.include_router(social.router)
 app.include_router(universal.router)
 
 
@@ -196,66 +194,6 @@ async def scrape_sync(req: ScrapeRequest):
     elapsed = round(time.time() - start, 2)
     logger.info(
         "Scrape done: %d leads in %ss for %r",
-        len(leads), elapsed, query,
-    )
-
-    return ScrapeResponse(
-        success=True,
-        total_leads=len(leads),
-        query=query,
-        time_seconds=elapsed,
-        leads=[LeadItem(**lead) for lead in leads],
-    )
-
-
-@app.post(
-    "/scrape/web",
-    response_model=ScrapeResponse,
-    responses={
-        422: {"model": ErrorResponse, "description": "Validation error"},
-        500: {"model": ErrorResponse, "description": "Scraping failed"},
-    },
-    tags=["Web Scraper"],
-)
-async def scrape_web(req: ScrapeRequest):
-    """Standalone Web Search scraper — searches Google web results instead of Google Maps.
-
-    **How it works:**
-    - Searches Google web for ``\"<keyword> in <location>\"``
-    - Finds Google Maps place links embedded in web search results
-    - Scrapes each found Maps place page for business details
-    - Optionally visits business websites to extract emails & social links
-    - Returns structured leads JSON
-
-    **When to use this instead of /scrape/sync:**
-    - When Maps returns very few results (rare businesses, small cities)
-    - When you want results discovered via web search ranking, not Maps ranking
-    - As a complement to Maps-based scraping
-    """
-    query = f"{req.keyword} in {req.location}"
-    logger.info(
-        "[WebScraper] Request: query=%r  limit=%d  find_emails=%s",
-        query, req.limit, req.find_emails,
-    )
-    start = time.time()
-
-    try:
-        leads = await _run_web_scrape(query, req.limit, req.find_emails)
-    except Exception as exc:
-        elapsed = round(time.time() - start, 2)
-        logger.error("[WebScraper] Failed after %ss: %s", elapsed, exc)
-        raise HTTPException(
-            status_code=500,
-            detail={
-                "success": False,
-                "error": "Web scraping failed",
-                "detail": str(exc),
-            },
-        )
-
-    elapsed = round(time.time() - start, 2)
-    logger.info(
-        "[WebScraper] Done: %d leads in %ss for %r",
         len(leads), elapsed, query,
     )
 
@@ -439,83 +377,6 @@ def _log_progress(msg: str) -> None:
     """Callback for agents to log progress."""
     logger.info(msg.strip())
 
-
-# ---------------------------------------------------------------------------
-# Standalone Web Search Scrape logic
-# ---------------------------------------------------------------------------
-async def _run_web_scrape(
-    query: str,
-    limit: int,
-    find_emails: bool,
-) -> list[dict]:
-    """Search Google web for Maps links, scrape them, optionally enrich with emails."""
-
-    async with BrowserManager() as manager:
-        web_agent = WebSearchAgent(manager)
-        maps_agent = MapsAgent(manager)
-        all_leads: list[dict] = []
-        seen: set[tuple] = set()
-
-        def _add_leads(new_leads: list[dict]) -> int:
-            added = 0
-            for lead in new_leads:
-                if len(all_leads) >= limit:
-                    break
-                key = (lead["name"].strip().lower(), lead["address"].strip().lower())
-                if key not in seen:
-                    seen.add(key)
-                    all_leads.append(lead)
-                    added += 1
-            return added
-
-        # --- Phase 1: Google Web Search -> collect Maps place links ---
-        logger.info("[WebScraper] Searching Google web for %r (limit %d)...", query, limit)
-        web_links = await web_agent.find_maps_links(
-            query=query,
-            max_links=limit + 2,  # small buffer for deduplication
-            progress=_log_progress,
-        )
-        logger.info("[WebScraper] Found %d Maps links from web search", len(web_links))
-
-        # --- Phase 2: Scrape each Maps place link for business details ---
-        if web_links:
-            web_context = await manager.new_context()
-            try:
-                raw_leads = await maps_agent._scrape_details(
-                    web_context, web_links, query, limit, _log_progress
-                )
-                _add_leads(raw_leads)
-            finally:
-                await web_context.close()
-
-        # --- Phase 3: If still need more, fall back to Maps search directly ---
-        if len(all_leads) < limit:
-            remaining = limit - len(all_leads)
-            logger.info(
-                "[WebScraper] Only %d leads found so far, falling back to Maps search (need %d more)...",
-                len(all_leads), remaining
-            )
-            maps_leads = await maps_agent.scrape(
-                query, max_results=remaining, progress=_log_progress
-            )
-            _add_leads(maps_leads)
-
-        all_leads = all_leads[:limit]
-        logger.info("[WebScraper] Got %d leads total", len(all_leads))
-
-        # --- Phase 4: Enrich with emails & social links ---
-        if all_leads and find_emails:
-            sites = sum(1 for l in all_leads if l.get("website"))
-            logger.info("[WebScraper] Enriching %d websites for emails...", sites)
-            enrich_context = await manager.new_context()
-            try:
-                await ExtractSkill(enrich_context).enrich_leads(all_leads, progress=_log_progress)
-            finally:
-                await enrich_context.close()
-            with_email = sum(1 for l in all_leads if l.get("emails"))
-            logger.info("[WebScraper] Enrichment done: %d leads have emails", with_email)
-
-    return all_leads
 
 
 # ---------------------------------------------------------------------------
