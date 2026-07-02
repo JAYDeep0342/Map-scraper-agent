@@ -6,7 +6,6 @@ from pydantic import BaseModel, Field
 
 from agents.universal_agent import UniversalAgent
 from agents.ecommerce_agent import EcommerceAgent
-from agents.social_agent import SocialAgent
 from browser.browser_manager import BrowserManager
 
 logger = logging.getLogger("universal-api")
@@ -14,7 +13,7 @@ logger = logging.getLogger("universal-api")
 router = APIRouter(prefix="/scrape/universal", tags=["Universal Scraper"])
 
 class UniversalRequest(BaseModel):
-    url: str = Field(..., description="Any URL (B2B, E-commerce, or Social Media)")
+    url: str = Field(..., description="Any URL (B2B or E-commerce)")
     limit: int = Field(default=10, ge=1, le=100, description="Max items to scrape (if applicable)")
 
 class UniversalResponse(BaseModel):
@@ -34,17 +33,12 @@ async def scrape_universal(req: UniversalRequest):
     platform = "b2b"
     if re.search(r"amazon\.|flipkart\.|myntra\.|meesho\.", url_lower):
         platform = "ecommerce"
-    elif re.search(r"instagram\.com|facebook\.com|twitter\.com|x\.com|linkedin\.com", url_lower):
-        platform = "social"
         
     async with BrowserManager() as manager:
         try:
             if platform == "ecommerce":
                 agent = EcommerceAgent(manager)
                 data = await agent.scrape(req.url, limit=req.limit, enrich_sellers=False)
-            elif platform == "social":
-                agent = SocialAgent(manager)
-                data = await agent.scrape(req.url)
             else:
                 agent = UniversalAgent(manager)
                 data = await agent.scrape(req.url, limit=req.limit)
