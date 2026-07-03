@@ -22,6 +22,7 @@ class EcommerceResponse(BaseModel):
     data: list
 
 @router.post("", response_model=EcommerceResponse)
+@router.post("/", response_model=EcommerceResponse, include_in_schema=False)
 async def scrape_ecommerce(req: EcommerceRequest):
     """Scrapes a given e-commerce product or search URL."""
     logger.info(f"[Ecommerce] Scraping URL: {req.url} (limit={req.limit})")
@@ -52,3 +53,10 @@ async def scrape_ecommerce(req: EcommerceRequest):
         total=len(data),
         data=data
     )
+
+
+@router.get("", response_model=EcommerceResponse)
+@router.get("/", response_model=EcommerceResponse, include_in_schema=False)
+async def scrape_ecommerce_get(url: str, limit: int = 1, enrich_sellers: bool = True):
+    """Scrapes a given e-commerce product or search URL via GET request (for browser testing)."""
+    return await scrape_ecommerce(EcommerceRequest(url=url, limit=limit, enrich_sellers=enrich_sellers))
