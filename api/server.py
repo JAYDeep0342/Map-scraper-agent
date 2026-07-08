@@ -20,7 +20,9 @@ import math
 import sys
 import time
 import traceback
+from contextlib import asynccontextmanager
 
+import psutil
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field, field_validator
@@ -28,6 +30,7 @@ from pydantic import BaseModel, Field, field_validator
 from agents.maps_agent import MapsAgent
 from browser.browser_manager import BrowserManager
 from skills.extract_skill import ExtractSkill
+from config import settings
 from config.india_cities import INDIA_CITIES, INDIA_STATES
 from config.city_areas import get_city_areas
 
@@ -42,6 +45,43 @@ logging.basicConfig(
 logger = logging.getLogger("scraper-api")
 
 # ---------------------------------------------------------------------------
+# Shared browser (Speed Optimization Playbook, Step 3 / Optimization 1)
+# ---------------------------------------------------------------------------
+# One Chromium process + Playwright driver, launched once at server startup
+# and reused for every scrape job's whole lifetime — measured on this host,
+# (re)launching both costs ~2.5-3.5s, which was previously paid on *every*
+# request/batch (see _run_scrape). Each job still gets its own isolated
+# BrowserContext (browser_manager.new_context()), so concurrent jobs never
+# share a mutable page/context. BrowserManager.start() detects a crashed
+# browser (is_connected() == False) and relaunches automatically.
+browser_manager = BrowserManager()
+
+# Caps how many /scrape/sync jobs run their browser phase at once — see
+# settings.MAX_CONCURRENT_SCRAPE_JOBS for the measured reasoning (default 1:
+# concurrent jobs against the shared browser were measured to contend badly
+# on this host). A semaphore, not a single global lock, so raising the
+# setting on a beefier host lets that many jobs run fully in parallel
+# instead of queueing every request behind one lock.
+_scrape_semaphore = asyncio.Semaphore(settings.MAX_CONCURRENT_SCRAPE_JOBS)
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Prime psutil's CPU-load baseline (settings.get_optimal_concurrency)
+    # here so the delta is meaningful by the time the first real request's
+    # detail phase runs, instead of that first call reporting 0.0.
+    psutil.cpu_percent(interval=None)
+    t0 = time.perf_counter()
+    await browser_manager.start()
+    logger.info("Shared browser warmed up in %.0fms", (time.perf_counter() - t0) * 1000)
+    try:
+        yield
+    finally:
+        logger.info("Shutting down shared browser...")
+        await browser_manager.close()
+
+
+# ---------------------------------------------------------------------------
 # FastAPI app
 # ---------------------------------------------------------------------------
 app = FastAPI(
@@ -49,6 +89,7 @@ app = FastAPI(
     version="2.0",
     description="Sync API for scraping Google Maps business leads. "
                 "Designed for Spring Boot backend integration.",
+    lifespan=lifespan,
 )
 
 # CORS — allow all origins so Spring Boot (any port) can call freely.
@@ -178,7 +219,8 @@ async def scrape_sync(req: ScrapeRequest):
     start = time.time()
 
     try:
-        leads = await _run_scrape(query, req.limit, req.find_emails)
+        async with _scrape_semaphore:
+            leads = await _run_scrape(query, req.limit, req.find_emails)
     except Exception as exc:
         elapsed = round(time.time() - start, 2)
         logger.error("Scrape failed after %ss: %s", elapsed, exc)
@@ -206,12 +248,26 @@ async def scrape_sync(req: ScrapeRequest):
     )
 
 
-# Number of Maps searches per browser session before restarting
-# Lower = more reliable, Higher = faster startup
+# Chunk size for query-plan logging/progress batches. No longer tied to
+# browser lifecycle (the browser is now a long-lived singleton, see
+# `browser_manager` above) — this just groups queries for the per-batch
+# time-budget check and log lines below.
 BROWSER_BATCH_SIZE = 25
 
 # Generic search prefix variations — applied to the ORIGINAL keyword
 QUERY_PREFIXES = ["best", "top rated", "popular", "famous", "top"]
+
+# Hard ceiling (seconds) on the whole fallback-query loop in _run_scrape.
+# Measured: for a niche category (e.g. "nursing college"), area-based
+# fallback queries mostly return the *same* businesses again (colleges
+# aren't neighborhood-scoped the way restaurants are) — the dedup logic
+# correctly drops them as duplicates, but the request still pays full
+# scrape time for each attempt. Without a budget this can chain through
+# many fallback queries and take 200s+ for a 10-lead request. Past this
+# ceiling, return whatever was collected so far instead of grinding
+# through the rest of the fallback list.
+def _get_scrape_time_budget(limit: int) -> float:
+    return min(120.0, max(60.0, limit * 8.0))
 
 
 def _build_query_list(query: str, limit: int) -> list[str]:
@@ -223,6 +279,17 @@ def _build_query_list(query: str, limit: int) -> list[str]:
     3. Prefix variations (best/top/popular + original keyword)
     4. Multi-city across 600+ India cities/districts
     5. State-level queries
+
+    Area/prefix variations (2-3) are queued for *every* limit, not just
+    large ones: `_run_scrape`'s batch loop already stops issuing further
+    queries the moment `limit` leads are collected, so for a normal query
+    (e.g. "restaurant in Indore") the primary query alone satisfies the
+    limit and these extra entries are never touched — zero added cost.
+    But for a niche category with a genuinely small result pool (e.g.
+    "nursing college in <city>", ~8 total listings), the primary query
+    alone can under-deliver even though the request only asked for 10;
+    these fallback variations give it a real chance to reach the limit
+    instead of silently returning less than asked.
     """
     queries: list[str] = []
 
@@ -232,9 +299,6 @@ def _build_query_list(query: str, limit: int) -> list[str]:
 
     # 1. Primary
     queries.append(query)
-
-    if limit <= 20:
-        return queries
 
     # 2. Area-based (same city, different zones) — best source of new leads
     if location:
@@ -271,11 +335,15 @@ async def _run_scrape(
     limit: int,
     find_emails: bool,
 ) -> list[dict]:
-    """Scrape leads using batch-based browser sessions for crash resilience.
+    """Scrape leads by running location queries against the shared browser.
 
-    Splits all location queries into batches of BROWSER_BATCH_SIZE.
-    Each batch gets a fresh browser instance, so a crash in one batch
-    does NOT stop the whole job.
+    Queries are grouped into batches of BROWSER_BATCH_SIZE only for
+    time-budget checks/logging; all batches share the one long-lived
+    browser (module-level `browser_manager`). If a batch raises, that
+    batch's remaining queries are skipped after a brief backoff — the
+    shared browser's own crash-recovery (BrowserManager.start()) handles
+    relaunching Chromium if it actually died, so the next batch's first
+    new_context() call recovers automatically.
     """
     all_leads: list[dict] = []
     seen: set[tuple] = set()
@@ -300,11 +368,22 @@ async def _run_scrape(
         total_queries, query, limit
     )
 
+    t_scrape_start = time.time()
+    scrape_budget = _get_scrape_time_budget(limit)
+
     # Process queries in batches — fresh browser per batch
     queries_done = 0
     for batch_start in range(0, total_queries, BROWSER_BATCH_SIZE):
         if len(all_leads) >= limit:
             logger.info("Limit reached (%d/%d). Stopping search.", len(all_leads), limit)
+            break
+
+        if time.time() - t_scrape_start > scrape_budget:
+            logger.info(
+                "Scrape time budget (%.0fs) reached with %d/%d leads — "
+                "returning what was found instead of trying more fallback queries.",
+                scrape_budget, len(all_leads), limit
+            )
             break
 
         batch = query_list[batch_start: batch_start + BROWSER_BATCH_SIZE]
@@ -316,59 +395,75 @@ async def _run_scrape(
         )
 
         try:
-            async with BrowserManager() as manager:
-                agent = MapsAgent(manager)
-                for loc_query in batch:
-                    if len(all_leads) >= limit:
-                        break
-                    queries_done += 1
-                    remaining = limit - len(all_leads)
+            agent = MapsAgent(browser_manager)
+            for loc_query in batch:
+                if len(all_leads) >= limit:
+                    break
+                if time.time() - t_scrape_start > scrape_budget:
                     logger.info(
-                        "[%d/%d] Searching: %r (need %d more)",
-                        queries_done, total_queries, loc_query, remaining
+                        "Scrape time budget (%.0fs) reached with %d/%d leads — "
+                        "stopping fallback queries mid-batch.",
+                        scrape_budget, len(all_leads), limit
                     )
-                    try:
-                        leads = await agent.scrape(
-                            loc_query,
-                            max_results=min(remaining, 30),
-                            progress=_log_progress,
+                    break
+                queries_done += 1
+                remaining = limit - len(all_leads)
+                logger.info(
+                    "[%d/%d] Searching: %r (need %d more)",
+                    queries_done, total_queries, loc_query, remaining
+                )
+                try:
+                    leads = await agent.scrape(
+                        loc_query,
+                        max_results=min(remaining, 30),
+                        progress=_log_progress,
+                    )
+                    added = _add_leads(leads)
+                    if added > 0:
+                        logger.info(
+                            "  +%d new leads (total: %d/%d)",
+                            added, len(all_leads), limit
                         )
-                        added = _add_leads(leads)
-                        if added > 0:
-                            logger.info(
-                                "  +%d new leads (total: %d/%d)",
-                                added, len(all_leads), limit
-                            )
-                    except Exception as exc:
-                        logger.warning("  Search failed for %r: %s", loc_query, exc)
-                        continue
+                except Exception as exc:
+                    logger.warning("  Search failed for %r: %s", loc_query, exc)
+                    continue
 
         except Exception as batch_exc:
             logger.warning(
-                "Batch %d/%d browser error: %s — starting fresh browser for next batch",
+                "Batch %d/%d error: %s — pausing briefly before next batch",
                 batch_num, total_batches, batch_exc
             )
-            await asyncio.sleep(2)  # brief pause before next batch
+            await asyncio.sleep(2)  # brief pause, lets a crashed browser be relaunched
             continue
 
     all_leads = all_leads[:limit]
     logger.info("Scraping done: %d unique leads collected", len(all_leads))
 
-    # Email enrichment in a SEPARATE fresh browser session
+    # Email enrichment via plain HTTP — no browser needed (Playbook Step 2)
     if all_leads and find_emails:
         sites = sum(1 for l in all_leads if l.get("website"))
         logger.info("Starting email enrichment for %d websites...", sites)
         try:
-            async with BrowserManager() as enrich_manager:
-                context = await enrich_manager.new_context()
-                try:
-                    await ExtractSkill(context).enrich_leads(all_leads, progress=_log_progress)
-                finally:
-                    await context.close()
+            await ExtractSkill().enrich_leads(all_leads, progress=_log_progress)
             with_email = sum(1 for l in all_leads if l.get("emails"))
             logger.info("Enrichment done: %d/%d leads have emails", with_email, len(all_leads))
         except Exception as exc:
             logger.warning("Email enrichment failed (leads still returned without emails): %s", exc)
+
+    phone_count = sum(1 for l in all_leads if l.get("phone"))
+    logger.info(
+        "Job metrics: %s",
+        {
+            "query": query,
+            "requested_limit": limit,
+            "queries_executed": queries_done,
+            "total_scrape_s": round(time.time() - t_scrape_start, 2),
+            "successful_leads": len(all_leads),
+            "phone_count": phone_count,
+            "phone_fill_rate": round(phone_count / len(all_leads), 2) if all_leads else 0.0,
+            "find_emails": find_emails,
+        },
+    )
 
     return all_leads
 
@@ -381,7 +476,8 @@ def _log_progress(msg: str) -> None:
 
 # ---------------------------------------------------------------------------
 # Entry point (when run directly: python -m api.server)
-# ---------------------------------------------------------------------------
+# ------------------------------
+# ---------------------------------------------
 if __name__ == "__main__":
     import uvicorn
 
