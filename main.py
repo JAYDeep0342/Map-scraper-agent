@@ -9,12 +9,20 @@ Usage:
 
 import argparse
 import asyncio
+import os
 import sys
 
 import uvicorn
 
 
 def main() -> None:
+    # Set the working directory to playwright-agent to allow imports and relative paths to work
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    target_dir = os.path.join(script_dir, "playwright-agent")
+    if os.path.exists(target_dir):
+        os.chdir(target_dir)
+        sys.path.insert(0, target_dir)
+
     parser = argparse.ArgumentParser(description="Google Maps Lead Scraper API")
     parser.add_argument("--host", default="0.0.0.0", help="Bind host (default: 0.0.0.0)")
     parser.add_argument("--port", type=int, default=8000, help="Bind port (default: 8000)")
