@@ -27,12 +27,19 @@ Har change ko ek **senior ML / backend engineer** ki tarah treat karo:
   (text mein) — khud kabhi execute mat karo.
 - Isse user manually handle karega.
 
-## 2. Scope — SIRF `playwright-agent/` Folder, Google Scraper API Tak Hi ❌➡️✅
+## 2. Scope — SIRF `playwright-agent/` Folder, Google Scraper API + Social Discovery Agent Tak Hi ❌➡️✅
 
 - Kaam **sirf `playwright-agent/` folder ke andar** hona chahiye, aur usme
-  bhi **sirf Google Maps Scraper API** (`api/server.py`, `agents/maps_agent.py`,
-  `skills/extract_skill.py`, `browser/browser_manager.py`,
-  `config/settings.py`) — inn files/logic tak hi kaam karna hai.
+  bhi **sirf in do capabilities** tak hi kaam karna hai:
+  - **Google Maps Scraper API**: `api/server.py`, `agents/maps_agent.py`,
+    `skills/extract_skill.py`, `browser/browser_manager.py`,
+    `config/settings.py`.
+  - **Social Profile Discovery Agent** (Instagram/Facebook public profile
+    discovery, added 2026-07-09): `agents/social_agent.py`,
+    `api/routers/social.py`, aur is capability ke liye zaroori naye
+    supporting files (query planner, URL normalization, identity
+    matching, metrics) — sirf `playwright-agent/` ke andar
+    (`agents/`, `skills/`, `api/`, `browser/`, `config/`).
 - **Confusion avoid karne ke liye specifically note karo:** repo mein ek
   alag folder bhi hai jiska naam **"google scraper agent"** (ya milta-julta
   naam) hai — **yeh alag folder hai, isko bilkul touch nahi karna hai.**
