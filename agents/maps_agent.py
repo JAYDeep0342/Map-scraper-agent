@@ -1,8 +1,7 @@
 """Maps agent using Playwright for automation.
 
 Scrapes Google Maps search results into structured lead records:
-business name, category, rating, reviews, address, phone, website,
-plus code and coordinates.
+business name, category, rating, address, phone, website and coordinates.
 """
 
 import asyncio
@@ -66,7 +65,7 @@ def _lead_from_card(card: dict, query: str) -> dict:
     for candidates where the card already has a phone number. Returns the
     exact same schema _extract_place() does — no API contract change.
     """
-    address, reviews = _parse_card_middle_segment(card.get("middle_segment", ""))
+    address, _reviews = _parse_card_middle_segment(card.get("middle_segment", ""))
     lat, lng = "", ""
     m = COORDS_RE.search(card["link"]) or COORDS_AT_RE.search(card["link"])
     if m:
@@ -76,16 +75,13 @@ def _lead_from_card(card: dict, query: str) -> dict:
         "name": card["name"],
         "category": card["category"],
         "rating": card["rating"],
-        "reviews": reviews,
         "address": address,
         "phone": card["phone"],
         "website": card["website"],
-        "plus_code": "",
         "latitude": lat,
         "longitude": lng,
         "maps_url": card["link"].split("?")[0],
         "emails": "",
-        "social_links": "",
     }
 
 
@@ -981,16 +977,13 @@ class MapsAgent:
             "name": data["name"],
             "category": data["category"],
             "rating": data["rating"],
-            "reviews": data["reviews"],
             "address": data["address"],
             "phone": data["phone"],
             "website": data["website"],
-            "plus_code": data["plus_code"],
             "latitude": lat,
             "longitude": lng,
             "maps_url": page.url.split("?")[0],
             "emails": "",
-            "social_links": "",
         }
 
     # ------------------------------------------------------------------ #
