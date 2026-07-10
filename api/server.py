@@ -1,10 +1,10 @@
 
 
-"""FastAPI server — Google Maps Lead Scraper (Sync API).
+"""FastAPI server ΓÇö Google Maps Lead Scraper (Sync API).
 
 Single endpoint designed for Spring Boot integration:
 
-    POST /scrape/sync   → scrape Google Maps, return leads as JSON directly
+    POST /scrape/sync   ΓåÆ scrape Google Maps, return leads as JSON directly
 
 Run:
     python main.py
@@ -48,7 +48,7 @@ logger = logging.getLogger("scraper-api")
 # Shared browser (Speed Optimization Playbook, Step 3 / Optimization 1)
 # ---------------------------------------------------------------------------
 # One Chromium process + Playwright driver, launched once at server startup
-# and reused for every scrape job's whole lifetime — measured on this host,
+# and reused for every scrape job's whole lifetime ΓÇö measured on this host,
 # (re)launching both costs ~2.5-3.5s, which was previously paid on *every*
 # request/batch (see _run_scrape). Each job still gets its own isolated
 # BrowserContext (browser_manager.new_context()), so concurrent jobs never
@@ -56,7 +56,7 @@ logger = logging.getLogger("scraper-api")
 # browser (is_connected() == False) and relaunches automatically.
 browser_manager = BrowserManager()
 
-# Caps how many /scrape/sync jobs run their browser phase at once — see
+# Caps how many /scrape/sync jobs run their browser phase at once ΓÇö see
 # settings.MAX_CONCURRENT_SCRAPE_JOBS for the measured reasoning (default 1:
 # concurrent jobs against the shared browser were measured to contend badly
 # on this host). A semaphore, not a single global lock, so raising the
@@ -92,7 +92,7 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# CORS — allow all origins so Spring Boot (any port) can call freely.
+# CORS ΓÇö allow all origins so Spring Boot (any port) can call freely.
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -104,9 +104,7 @@ app.add_middleware(
 # ---------------------------------------------------------------------------
 # Decoupled Routers (E-commerce & Social Media)
 # ---------------------------------------------------------------------------
-from api.routers import ecommerce, universal
-app.include_router(ecommerce.router)
-app.include_router(universal.router)
+# ecommerce and universal routers disabled (files not present in this version)
 
 
 # ---------------------------------------------------------------------------
@@ -190,7 +188,7 @@ class ErrorResponse(BaseModel):
 # ---------------------------------------------------------------------------
 @app.get("/health")
 def health():
-    """Quick health check — Spring Boot can ping this to verify the service is up."""
+    """Quick health check ΓÇö Spring Boot can ping this to verify the service is up."""
     return {"status": "ok", "service": "google-maps-lead-scraper"}
 
 
@@ -250,17 +248,17 @@ async def scrape_sync(req: ScrapeRequest):
 
 # Chunk size for query-plan logging/progress batches. No longer tied to
 # browser lifecycle (the browser is now a long-lived singleton, see
-# `browser_manager` above) — this just groups queries for the per-batch
+# `browser_manager` above) ΓÇö this just groups queries for the per-batch
 # time-budget check and log lines below.
 BROWSER_BATCH_SIZE = 25
 
-# Generic search prefix variations — applied to the ORIGINAL keyword
+# Generic search prefix variations ΓÇö applied to the ORIGINAL keyword
 QUERY_PREFIXES = ["best", "top rated", "popular", "famous", "top"]
 
 # Hard ceiling (seconds) on the whole fallback-query loop in _run_scrape.
 # Measured: for a niche category (e.g. "nursing college"), area-based
 # fallback queries mostly return the *same* businesses again (colleges
-# aren't neighborhood-scoped the way restaurants are) — the dedup logic
+# aren't neighborhood-scoped the way restaurants are) ΓÇö the dedup logic
 # correctly drops them as duplicates, but the request still pays full
 # scrape time for each attempt. Without a budget this can chain through
 # many fallback queries and take 200s+ for a 10-lead request. Past this
@@ -275,7 +273,7 @@ def _build_query_list(query: str, limit: int) -> list[str]:
 
     Strategy (queries added as needed based on limit):
     1. Primary query
-    2. Area-based queries (same city, different zones) — ~20 new results each
+    2. Area-based queries (same city, different zones) ΓÇö ~20 new results each
     3. Prefix variations (best/top/popular + original keyword)
     4. Multi-city across 600+ India cities/districts
     5. State-level queries
@@ -284,7 +282,7 @@ def _build_query_list(query: str, limit: int) -> list[str]:
     large ones: `_run_scrape`'s batch loop already stops issuing further
     queries the moment `limit` leads are collected, so for a normal query
     (e.g. "restaurant in Indore") the primary query alone satisfies the
-    limit and these extra entries are never touched — zero added cost.
+    limit and these extra entries are never touched ΓÇö zero added cost.
     But for a niche category with a genuinely small result pool (e.g.
     "nursing college in <city>", ~8 total listings), the primary query
     alone can under-deliver even though the request only asked for 10;
@@ -300,7 +298,7 @@ def _build_query_list(query: str, limit: int) -> list[str]:
     # 1. Primary
     queries.append(query)
 
-    # 2. Area-based (same city, different zones) — best source of new leads
+    # 2. Area-based (same city, different zones) ΓÇö best source of new leads
     if location:
         areas = get_city_areas(location)
         for area in areas:
@@ -340,7 +338,7 @@ async def _run_scrape(
     Queries are grouped into batches of BROWSER_BATCH_SIZE only for
     time-budget checks/logging; all batches share the one long-lived
     browser (module-level `browser_manager`). If a batch raises, that
-    batch's remaining queries are skipped after a brief backoff — the
+    batch's remaining queries are skipped after a brief backoff ΓÇö the
     shared browser's own crash-recovery (BrowserManager.start()) handles
     relaunching Chromium if it actually died, so the next batch's first
     new_context() call recovers automatically.
@@ -371,7 +369,7 @@ async def _run_scrape(
     t_scrape_start = time.time()
     scrape_budget = _get_scrape_time_budget(limit)
 
-    # Process queries in batches — fresh browser per batch
+    # Process queries in batches ΓÇö fresh browser per batch
     queries_done = 0
     for batch_start in range(0, total_queries, BROWSER_BATCH_SIZE):
         if len(all_leads) >= limit:
@@ -380,7 +378,7 @@ async def _run_scrape(
 
         if time.time() - t_scrape_start > scrape_budget:
             logger.info(
-                "Scrape time budget (%.0fs) reached with %d/%d leads — "
+                "Scrape time budget (%.0fs) reached with %d/%d leads ΓÇö "
                 "returning what was found instead of trying more fallback queries.",
                 scrape_budget, len(all_leads), limit
             )
@@ -401,7 +399,7 @@ async def _run_scrape(
                     break
                 if time.time() - t_scrape_start > scrape_budget:
                     logger.info(
-                        "Scrape time budget (%.0fs) reached with %d/%d leads — "
+                        "Scrape time budget (%.0fs) reached with %d/%d leads ΓÇö "
                         "stopping fallback queries mid-batch.",
                         scrape_budget, len(all_leads), limit
                     )
@@ -430,7 +428,7 @@ async def _run_scrape(
 
         except Exception as batch_exc:
             logger.warning(
-                "Batch %d/%d error: %s — pausing briefly before next batch",
+                "Batch %d/%d error: %s ΓÇö pausing briefly before next batch",
                 batch_num, total_batches, batch_exc
             )
             await asyncio.sleep(2)  # brief pause, lets a crashed browser be relaunched
@@ -439,7 +437,7 @@ async def _run_scrape(
     all_leads = all_leads[:limit]
     logger.info("Scraping done: %d unique leads collected", len(all_leads))
 
-    # Email enrichment via plain HTTP — no browser needed (Playbook Step 2)
+    # Email enrichment via plain HTTP ΓÇö no browser needed (Playbook Step 2)
     if all_leads and find_emails:
         sites = sum(1 for l in all_leads if l.get("website"))
         logger.info("Starting email enrichment for %d websites...", sites)

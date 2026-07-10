@@ -1,0 +1,51 @@
+"""India cities and states data for multi-city scraping queries."""
+
+INDIA_CITIES: list[str] = [
+    # Tier 1
+    "Mumbai", "Delhi", "Bangalore", "Hyderabad", "Ahmedabad", "Chennai",
+    "Kolkata", "Surat", "Pune", "Jaipur", "Lucknow", "Kanpur", "Nagpur",
+    "Indore", "Thane", "Bhopal", "Visakhapatnam", "Pimpri-Chinchwad",
+    "Patna", "Vadodara",
+    # Tier 2
+    "Ghaziabad", "Ludhiana", "Agra", "Nashik", "Faridabad", "Meerut",
+    "Rajkot", "Kalyan-Dombivli", "Vasai-Virar", "Varanasi", "Srinagar",
+    "Aurangabad", "Dhanbad", "Amritsar", "Navi Mumbai", "Allahabad",
+    "Howrah", "Ranchi", "Gwalior", "Jabalpur", "Coimbatore", "Vijayawada",
+    "Jodhpur", "Madurai", "Raipur", "Kota", "Chandigarh", "Guwahati",
+    "Solapur", "Hubballi-Dharwad", "Tiruchirappalli", "Bareilly", "Mysore",
+    "Tiruppur", "Gurgaon", "Aligarh", "Jalandhar", "Bhubaneswar",
+    "Salem", "Warangal", "Guntur", "Bhiwandi", "Saharanpur", "Gorakhpur",
+    "Bikaner", "Amravati", "Noida", "Jamshedpur", "Bhilai", "Cuttack",
+    "Firozabad", "Kochi", "Nellore", "Bhavnagar", "Dehradun", "Durgapur",
+    "Asansol", "Rourkela", "Nanded", "Kolhapur", "Ajmer", "Akola",
+    "Gulbarga", "Jamnagar", "Ujjain", "Loni", "Siliguri", "Jhansi",
+    "Ulhasnagar", "Jammu", "Sangli-Miraj & Kupwad", "Mangalore",
+    "Erode", "Belgaum", "Ambattur", "Tirunelveli", "Malegaon", "Gaya",
+    "Jalgaon", "Udaipur", "Maheshtala", "Davanagere", "Kozhikode",
+    "Kurnool", "Rajpur Sonarpur", "Bokaro Steel City", "South Dumdum",
+    "Bellary", "Patiala", "Gopalpur", "Agartala", "Bhagalpur",
+    "Muzaffarnagar", "Bhatpara", "Panihati", "Latur", "Dhule",
+    "Tirupati", "Rohtak", "Sagar", "Korba", "Bhilwara", "Berhampur",
+    "Muzaffarpur", "Ahmednagar", "Mathura", "Kollam", "Avadi",
+    "Kadapa", "Kamarhati", "Sambalpur", "Bilaspur", "Shahjahanpur",
+    "Satara", "Bijapur", "Rampur", "Shivamogga", "Chandrapur",
+    "Junagadh", "Thrissur", "Alwar", "Bardhaman", "Kulti",
+    "Kakinada", "Nizamabad", "Parbhani", "Tumkur", "Hisar",
+    "Ozhukarai", "Bihar Sharif", "Panipat", "Darbhanga", "Aizawl",
+    "Imphal", "Tirupati", "Ratlam", "Hapur", "Arrah", "Anantapur",
+    "Karimnagar", "Etawah", "Ambarnath", "North Dumdum", "Bharatpur",
+    "Begusarai", "New Delhi", "Gandhidham", "Baranagar", "Tiruvottiyur",
+    "Puducherry", "Sikar", "Thoothukudi", "Rewa", "Mirzapur",
+    "Raichur", "Pali", "Muzaffarnagar", "Proddatur", "Bahraich",
+    "Shimla", "Gandhinagar", "Pondicherry", "Haridwar", "Karimnagar",
+]
+
+INDIA_STATES: list[str] = [
+    "Andhra Pradesh", "Arunachal Pradesh", "Assam", "Bihar", "Chhattisgarh",
+    "Goa", "Gujarat", "Haryana", "Himachal Pradesh", "Jharkhand",
+    "Karnataka", "Kerala", "Madhya Pradesh", "Maharashtra", "Manipur",
+    "Meghalaya", "Mizoram", "Nagaland", "Odisha", "Punjab", "Rajasthan",
+    "Sikkim", "Tamil Nadu", "Telangana", "Tripura", "Uttar Pradesh",
+    "Uttarakhand", "West Bengal", "Delhi", "Jammu and Kashmir",
+    "Ladakh", "Puducherry", "Chandigarh",
+]
