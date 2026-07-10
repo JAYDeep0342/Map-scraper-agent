@@ -74,6 +74,11 @@ async def lifespan(app: FastAPI):
     t0 = time.perf_counter()
     await browser_manager.start()
     logger.info("Shared browser warmed up in %.0fms", (time.perf_counter() - t0) * 1000)
+    # Exposed via app.state (not a direct import) so other routers — e.g.
+    # api/routers/social.py — can reuse the same shared browser + admission
+    # semaphore without a circular import back into this module.
+    app.state.browser_manager = browser_manager
+    app.state.scrape_semaphore = _scrape_semaphore
     try:
         yield
     finally:
@@ -102,7 +107,7 @@ app.add_middleware(
 )
 
 # ---------------------------------------------------------------------------
-# Decoupled Routers (E-commerce & Social Media)
+# Decoupled Routers (E-commerce, Universal & Social Profile Discovery)
 # ---------------------------------------------------------------------------
 # ecommerce and universal routers disabled (files not present in this version)
 
@@ -135,7 +140,7 @@ class ScrapeRequest(BaseModel):
     )
     find_emails: bool = Field(
         default=True,
-        description="Visit each business website to extract emails and social links",
+        description="Visit each business website to extract emails",
     )
 
     @field_validator("keyword", "location", mode="before")
@@ -153,13 +158,10 @@ class LeadItem(BaseModel):
     name: str = ""
     category: str = ""
     rating: str = ""
-    reviews: str = ""
     address: str = ""
     phone: str = ""
     website: str = ""
     emails: str = ""
-    social_links: str = ""
-    plus_code: str = ""
     latitude: str = ""
     longitude: str = ""
     maps_url: str = ""

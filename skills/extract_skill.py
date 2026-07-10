@@ -40,7 +40,7 @@ class ExtractSkill:
         )
 
     async def enrich_leads(self, leads: list[dict], progress=None) -> None:
-        """Fill ``emails`` and ``social_links`` for every lead with a website."""
+        """Fill ``emails`` for every lead with a website."""
         # Step 6: httpx requests are genuinely I/O-bound (no JS/render cost
         # per tab like Playwright), so this can use the full cpu_count*4
         # headroom rather than the conservative cap used for detail tabs.
@@ -51,9 +51,8 @@ class ExtractSkill:
         async def worker(lead: dict) -> None:
             nonlocal done
             async with semaphore:
-                emails, socials = await self._extract_from_site(lead["website"])
+                emails, _socials = await self._extract_from_site(lead["website"])
                 lead["emails"] = ", ".join(emails)
-                lead["social_links"] = ", ".join(socials)
                 done += 1
                 if progress:
                     found = f"{len(emails)} email(s)" if emails else "no email"

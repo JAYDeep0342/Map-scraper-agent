@@ -1,8 +1,7 @@
 """Maps agent using Playwright for automation.
 
 Scrapes Google Maps search results into structured lead records:
-business name, category, rating, reviews, address, phone, website,
-plus code and coordinates.
+business name, category, rating, address, phone, website and coordinates.
 """
 
 import asyncio
@@ -66,7 +65,7 @@ def _lead_from_card(card: dict, query: str) -> dict:
     for candidates where the card already has a phone number. Returns the
     exact same schema _extract_place() does — no API contract change.
     """
-    address, reviews = _parse_card_middle_segment(card.get("middle_segment", ""))
+    address, _reviews = _parse_card_middle_segment(card.get("middle_segment", ""))
     lat, lng = "", ""
     m = COORDS_RE.search(card["link"]) or COORDS_AT_RE.search(card["link"])
     if m:
@@ -76,16 +75,13 @@ def _lead_from_card(card: dict, query: str) -> dict:
         "name": card["name"],
         "category": card["category"],
         "rating": card["rating"],
-        "reviews": reviews,
         "address": address,
         "phone": card["phone"],
         "website": card["website"],
-        "plus_code": "",
         "latitude": lat,
         "longitude": lng,
         "maps_url": card["link"].split("?")[0],
         "emails": "",
-        "social_links": "",
     }
 
 
@@ -386,7 +382,8 @@ class MapsAgent:
             pass
 
     async def _collect_listing_cards(
-        self, page: Page, max_results: int, progress=None, trace: "_RequestTrace | None" = None
+        self, page: Page, max_results: int, progress=None, trace: "_RequestTrace | None" = None,
+        on_new_cards=None, stop_event: "asyncio.Event | None" = None,
     ) -> list[dict]:
         """Scroll the results feed and collect unique candidates, extracting
         card-visible fields (name, category, rating, phone, website)
@@ -398,6 +395,15 @@ class MapsAgent:
         website on 84%, with zero detail-page navigation. Card boundary
         confirmed as div.Nv2PK (verified against actual result count, not
         assumed).
+
+        ``on_new_cards``/``stop_event`` (added for the social-discovery
+        streaming experiment, agents/social_agent.py) are optional and
+        default to None/no-op — every existing caller (MapsAgent.scrape(),
+        the production /scrape/sync path) passes neither, so this method's
+        behavior for them is unchanged: no new branch executes. When given,
+        ``on_new_cards`` is awaited once per scroll round with just that
+        round's newly-deduped cards (never touches ``page`` itself), and
+        the scroll loop also exits early once ``stop_event`` is set.
         """
         try:
             await page.wait_for_selector('div[role="feed"]', timeout=20_000)
@@ -442,17 +448,26 @@ class MapsAgent:
                 });
             }""")
             before = len(cards)
+            new_this_round = []
             for c in raw_cards:
                 if not c["link"]:
                     continue
                 clean_link = c["link"].split("?")[0]
                 if clean_link not in cards:
                     cards[clean_link] = c
+                    new_this_round.append(c)
 
             if trace is not None:
                 trace.mark_candidates_discovered(len(cards))
             if progress and len(cards) != before:
                 progress(f"  Collected {len(cards)} cards so far...")
+            if on_new_cards is not None and new_this_round:
+                await on_new_cards(new_this_round)
+
+            if stop_event is not None and stop_event.is_set():
+                if progress:
+                    progress(f"  Stop requested externally: {len(cards)} cards collected.")
+                break
 
             if len(cards) >= max_results:
                 if progress:
@@ -485,6 +500,40 @@ class MapsAgent:
                 pass
 
         return list(cards.values())[:max_results]
+
+    # ------------------------------------------------------------------ #
+    # Social Profile Discovery Agent seam (agents/social_agent.py) — new,
+    # isolated entry point added for the streaming experiment. Does not
+    # call _scrape_details()/_extract_place() (no detail-page navigation:
+    # social discovery only needs card-visible fields, never phone, so the
+    # production phone-quality-gate concern that drives detail navigation
+    # in scrape() doesn't apply here). scrape() itself is untouched.
+    # ------------------------------------------------------------------ #
+    async def stream_social_candidates(
+        self, query: str, max_candidate_budget: int, on_new_cards, stop_event: asyncio.Event, progress=None,
+    ) -> int:
+        """Scroll-collect card candidates for ``query``, invoking
+        ``on_new_cards(list[dict])`` after every round with that round's
+        newly-deduped cards, stopping early if ``stop_event`` is set.
+        Returns the total unique card count seen. Single-business direct
+        redirects (rare for a category+location query) yield zero cards —
+        the social pipeline's own Maps-query fan-out (multiple location
+        variants) covers that case, same as the production path.
+        """
+        context = await self.browser_manager.new_context()
+        try:
+            page = await context.new_page()
+            url = settings.MAPS_SEARCH_URL.format(query=urllib.parse.quote(query))
+            await page.goto(url, wait_until="commit")
+            await self._handle_consent(page)
+            if "/maps/place/" in page.url:
+                return 0
+            cards = await self._collect_listing_cards(
+                page, max_candidate_budget, progress, on_new_cards=on_new_cards, stop_event=stop_event,
+            )
+            return len(cards)
+        finally:
+            await context.close()
 
     async def _produce_links_streaming(
         self, page: Page, max_links: int, queue: "asyncio.Queue[str | None]",
@@ -981,16 +1030,13 @@ class MapsAgent:
             "name": data["name"],
             "category": data["category"],
             "rating": data["rating"],
-            "reviews": data["reviews"],
             "address": data["address"],
             "phone": data["phone"],
             "website": data["website"],
-            "plus_code": data["plus_code"],
             "latitude": lat,
             "longitude": lng,
             "maps_url": page.url.split("?")[0],
             "emails": "",
-            "social_links": "",
         }
 
     # ------------------------------------------------------------------ #
