@@ -183,11 +183,6 @@ class ErrorResponse(BaseModel):
     success: bool = False
     error: str
     detail: str = ""
-
-
-# ---------------------------------------------------------------------------
-# Endpoints
-# ---------------------------------------------------------------------------
 @app.get("/health")
 def health():
     """Quick health check ΓÇö Spring Boot can ping this to verify the service is up."""
